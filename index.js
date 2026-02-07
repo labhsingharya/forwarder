@@ -34,7 +34,6 @@ async function getBrowser() {
   console.log("🧠 Launching Chromium...");
   browser = await chromium.launch({
     headless: true,
-    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
