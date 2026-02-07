@@ -1,12 +1,14 @@
 {
-  "name": "telegram-faym-playwright",
-  "version": "1.0.0",
-  "type": "module",
+  "name": "telegram-user-bot",
+  "version": "1.0.3",
+  "description": "Telegram Userbot with Playwright-based faym.co unshort",
+  "main": "index.js",
   "scripts": {
+    "build": "npx playwright install chromium",
     "start": "node index.js"
   },
   "dependencies": {
-    "telegram": "^2.19.7",
+    "telegram": "^2.26.22",
     "playwright": "^1.42.0"
   }
 }
