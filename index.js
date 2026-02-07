@@ -1,11 +1,11 @@
 import http from "http";
+import fetch from "node-fetch";
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage } from "telegram/events/index.js";
-import { chromium } from "playwright";
 
 /* ================= HTTP SERVER (RENDER KEEP ALIVE) ================= */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
@@ -15,68 +15,50 @@ http.createServer((req, res) => {
 });
 
 /* ================= ENV ================= */
-const apiId = parseInt(process.env.API_ID);
+const apiId = Number(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
 
-const sourceChat = process.env.SOURCE_CHAT;
-const destinationChat = process.env.DESTINATION_CHAT;
+const SOURCE_CHAT = process.env.SOURCE_CHAT;
+const DEST_CHAT = process.env.DESTINATION_CHAT;
 
-/* ================= RATE LIMIT ================= */
-let messageTimestamps = [];
+/* ================= FLOOD CONTROL ================= */
+let timestamps = [];
 
-/* ================= PLAYWRIGHT ================= */
-let browser;
-
-async function getBrowser() {
-  if (browser) return browser;
-
-  console.log("🧠 Launching Chromium...");
-  browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage"
-    ]
-  });
-
-  console.log("✅ Chromium Ready");
-  return browser;
-}
-
-/* ================= STRICT faym.co → meesho.com ================= */
+/* ================= FAYM → MEESHO UNSHORT (NO PLAYWRIGHT) ================= */
 async function unshortFaymStrict(url, depth = 0) {
-  if (depth > 4) return null;
+  if (depth > 5) return null;
 
-  let page;
   try {
-    const br = await getBrowser();
-    page = await br.newPage();
-
-    let finalUrl = null;
-
-    page.on("request", req => {
-      const u = req.url();
-      if (u.startsWith("http") && !u.includes("faym.co")) {
-        finalUrl = u;
-      }
+    const res = await fetch(url, {
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+      },
+      redirect: "follow",
+      timeout: 15000
     });
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForTimeout(4000);
-    await page.close();
+    const html = await res.text();
 
-    if (!finalUrl) return null;
+    // 1️⃣ Direct Meesho link in HTML
+    const meesho = html.match(
+      /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
+    );
+    if (meesho) return meesho[0];
 
-    if (finalUrl.includes("meesho.com")) return finalUrl;
-    if (finalUrl.includes("faym.co")) return unshortFaymStrict(finalUrl, depth + 1);
+    // 2️⃣ Meta refresh
+    const meta = html.match(/url=([^"' >]+)/i);
+    if (meta) {
+      const next = meta[1];
+      if (next.includes("meesho.com")) return next;
+      if (next.includes("faym.co"))
+        return unshortFaymStrict(next, depth + 1);
+    }
 
     return null;
-
   } catch (e) {
-    if (page) await page.close();
-    console.error("❌ Unshort Error:", e.message);
+    console.log("❌ Faym unshort failed");
     return null;
   }
 }
@@ -98,42 +80,36 @@ async function unshortFaymStrict(url, depth = 0) {
 
     try {
       const chatId = (await client.getPeerId(msg.peerId)).toString();
-      if (chatId !== sourceChat) return;
+      if (chatId !== SOURCE_CHAT) return;
 
-      /* ===== Flood Control ===== */
+      /* ===== FLOOD LIMIT ===== */
       const now = Math.floor(Date.now() / 1000);
-      messageTimestamps = messageTimestamps.filter(t => t > now - 10);
-      messageTimestamps.push(now);
+      timestamps = timestamps.filter(t => t > now - 10);
+      timestamps.push(now);
 
-      if (messageTimestamps.length > 10) {
-        console.log("⚠️ Flood sleep");
+      if (timestamps.length > 10) {
+        console.log("⚠️ Flood wait");
         await new Promise(r => setTimeout(r, 60000));
-        messageTimestamps = [];
+        timestamps = [];
       }
 
       let text = msg.message || "";
-
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
-      let reject = false;
 
       for (const u of urls) {
         if (u.includes("faym.co")) {
           const finalUrl = await unshortFaymStrict(u);
           if (!finalUrl) {
-            reject = true;
-            break;
+            console.log("⛔ Faym reject");
+            return;
           }
           text = text.replaceAll(u, finalUrl);
         }
       }
 
-      if (reject) {
-        console.log("⛔ Rejected non-meesho link");
-        return;
-      }
-
+      /* ===== MEDIA ===== */
       if (msg.media) {
-        await client.sendFile(destinationChat, {
+        await client.sendFile(DEST_CHAT, {
           file: msg.media,
           caption: text || undefined
         });
@@ -141,30 +117,20 @@ async function unshortFaymStrict(url, depth = 0) {
         return;
       }
 
+      /* ===== TEXT ===== */
       if (text.trim()) {
         await client.invoke(
           new Api.messages.SendMessage({
-            peer: destinationChat,
-            message: text,
-            noWebpage: false
+            peer: DEST_CHAT,
+            message: text
           })
         );
         console.log("📝 Text forwarded");
       }
 
     } catch (err) {
-      console.error("❌ Handler Error:", err.message);
+      console.error("❌ Handler error:", err.message);
     }
   }, new NewMessage({}));
 
 })();
-
-/* ================= GRACEFUL SHUTDOWN ================= */
-async function shutdown() {
-  console.log("🛑 Shutting down...");
-  if (browser) await browser.close();
-  process.exit(0);
-}
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
