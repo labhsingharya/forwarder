@@ -8,6 +8,6 @@
   },
   "dependencies": {
     "telegram": "^2.19.7",
-    "playwright": "^1.41.0"
+    "node-fetch": "^3.3.2"
   }
 }
