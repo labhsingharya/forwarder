@@ -1,13 +1,12 @@
 {
-  "name": "telegram-render-userbot",
+  "name": "telegram-faym-playwright",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "telegram": "^2.19.7",
-    "node-fetch": "^3.3.2"
+    "playwright": "^1.42.0"
   }
 }
