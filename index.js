@@ -123,7 +123,8 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
 
       for (const u of urls) {
         if (u.includes("faym.co")) {
-          const finalUrl = await unshortFaymBest(u);
+          const finalUrl = await unshortFaymUntilMeesho(u);
+
 
           if (!finalUrl) {
             console.log("⛔ Faym removed");
