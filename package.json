@@ -1,8 +1,8 @@
 {
-  "name": "telegram-userbot",
+  "name": "telegram-render-userbot",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "module",
+  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
@@ -11,4 +11,3 @@
     "playwright": "^1.41.0"
   }
 }
-
