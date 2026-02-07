@@ -1,6 +1,6 @@
 import http from "http";
 import { TelegramClient, Api } from "telegram";
-import { StringSession } from "telegram/sessions";
+import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage } from "telegram/events";
 import { chromium } from "playwright";
 
