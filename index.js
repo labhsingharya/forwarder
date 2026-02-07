@@ -1,36 +1,23 @@
-import http from "http";
-import { TelegramClient, Api } from "telegram";
-import { StringSession } from "telegram/sessions/index.js";
-import { NewMessage } from "telegram/events/index.js";
-import { chromium } from "playwright";
+const { TelegramClient, Api } = require("telegram");
+const { StringSession } = require("telegram/sessions");
+const { NewMessage } = require("telegram/events");
+const { chromium } = require("playwright");
 
-/* =====================================================
-   1️⃣ HTTP SERVER (keep service alive)
-===================================================== */
-const PORT = process.env.PORT || 10000;
-
-http.createServer((req, res) => {
-  res.writeHead(200);
-  res.end("Telegram Userbot + Playwright Running ✅");
-}).listen(PORT, () => {
-  console.log("🌐 Web Service active on port", PORT);
-});
-
-/* =====================================================
-   2️⃣ ENV
-===================================================== */
-const apiId = Number(process.env.API_ID);
+/* ===== ENV ===== */
+const apiId = parseInt(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
 
-const SOURCE_CHAT = process.env.SOURCE_CHAT;
-const DEST_CHAT = process.env.DESTINATION_CHAT;
+const sourceChat = process.env.SOURCE_CHAT || "-1003508245377";
+const destinationChat = process.env.DESTINATION_CHAT || "-1001208173141";
 
-/* =====================================================
-   3️⃣ PLAYWRIGHT (single browser instance)
-===================================================== */
+/* ===== RATE LIMIT ===== */
+let messageTimestamps = [];
+
+/* ===== PLAYWRIGHT BROWSER ===== */
 let browser;
 
+/* ===== LAZY BROWSER START ===== */
 async function getBrowser() {
   if (browser) return browser;
 
@@ -50,109 +37,159 @@ async function getBrowser() {
 }
 
 /* =====================================================
-   4️⃣ FAYM → MEESHO (REAL BROWSER UNSHORT)
+   🔁 STRICT faym.co → ONLY meesho.com UNSHORT
 ===================================================== */
-async function unshortFaymWithBrowser(url) {
-  const br = await getBrowser();
-  const page = await br.newPage();
+async function unshortFaymStrict(url, depth = 0) {
+  if (depth > 6) return null; // safety limit
 
+  let page;
   try {
+    const br = await getBrowser();
+    page = await br.newPage();
+
+    let finalUrl = null;
+
+    page.on("request", req => {
+      const reqUrl = req.url();
+      if (reqUrl.startsWith("http") && !reqUrl.includes("faym.co")) {
+        finalUrl = reqUrl;
+      }
+    });
+
     await page.goto(url, {
       waitUntil: "domcontentloaded",
       timeout: 30000
     });
 
-    // Faym JS redirect ka wait
     await page.waitForTimeout(6000);
-
-    const finalUrl = page.url();
-
     await page.close();
 
+    if (!finalUrl) return null;
+
+    // ✅ ACCEPT ONLY MEESHO
     if (finalUrl.includes("meesho.com")) {
-      console.log("✅ Faym resolved via browser");
       return finalUrl;
     }
 
-    console.log("⛔ Faym resolved but not Meesho");
+    // 🔁 AGAIN faym.co → REPEAT
+    if (finalUrl.includes("faym.co")) {
+      return await unshortFaymStrict(finalUrl, depth + 1);
+    }
+
+    // ❌ ANYTHING ELSE → REJECT
     return null;
 
-  } catch (e) {
-    await page.close();
-    console.log("❌ Playwright error:", e.message);
+  } catch (err) {
+    if (page) await page.close();
+    console.error("❌ Unshort Error:", err.message);
     return null;
   }
 }
 
 /* =====================================================
-   5️⃣ TELEGRAM USERBOT
+   🚀 START BOT
 ===================================================== */
 (async () => {
-  console.log("🚀 Telegram Bot Starting...");
+  console.log("🚀 Bot Starting...");
 
   const client = new TelegramClient(stringSession, apiId, apiHash, {
     connectionRetries: 5
   });
 
   await client.connect();
-  console.log("✅ Telegram Connected");
+  console.log("✅ Bot Connected | Watching:", sourceChat);
 
   client.addEventHandler(async (event) => {
-    const msg = event.message;
-    if (!msg || !msg.peerId) return;
+    const message = event.message;
+    if (!message || !message.peerId) return;
 
     try {
-      const chatId = (await client.getPeerId(msg.peerId)).toString();
-      if (chatId !== SOURCE_CHAT) return;
+      const senderChatId = (await client.getPeerId(message.peerId)).toString();
+      if (senderChatId !== sourceChat) return;
 
-      let text = msg.message || "";
+      /* ===== RATE LIMIT ===== */
+      const now = Math.floor(Date.now() / 1000);
+      messageTimestamps = messageTimestamps.filter(ts => ts > now - 10);
+      messageTimestamps.push(now);
+
+      if (messageTimestamps.length > 10) {
+        console.log("⚠️ Flood Control Sleep...");
+        await new Promise(r => setTimeout(r, 100000));
+        messageTimestamps = [];
+      }
+
+      /* ===== TEXT / CAPTION ===== */
+      let text = message.message || message.text || "";
+
+      /* ===== PROCESS faym.co LINKS ===== */
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
+      let rejectMessage = false;
 
-      for (const u of urls) {
-        if (u.includes("faym.co")) {
-          const finalUrl = await unshortFaymWithBrowser(u);
+      for (const url of urls) {
+        if (url.includes("faym.co")) {
+          const finalUrl = await unshortFaymStrict(url);
 
           if (!finalUrl) {
-            console.log("⛔ Faym → Meesho not found, skip post");
-            return; // ❌ poora message skip
+            rejectMessage = true;
+            break;
           }
 
-          text = text.replaceAll(u, finalUrl);
+          text = text.split(url).join(finalUrl);
         }
       }
 
-      /* MEDIA */
-      if (msg.media) {
-        await client.sendFile(DEST_CHAT, {
-          file: msg.media,
+      /* 🚫 REJECT MESSAGE COMPLETELY */
+      if (rejectMessage) {
+        console.log("⛔ Non-Meesho link found → Message skipped");
+        return;
+      }
+
+      /* ===== MEDIA MESSAGE ===== */
+      if (message.media) {
+        await client.sendFile(destinationChat, {
+          file: message.media,
           caption: text || undefined
         });
         console.log("📸 Media forwarded");
         return;
       }
 
-      /* TEXT */
+      /* ===== TEXT MESSAGE ===== */
       if (text.trim()) {
         await client.invoke(
           new Api.messages.SendMessage({
-            peer: DEST_CHAT,
-            message: text
+            peer: destinationChat,
+            message: text,
+            noWebpage: false
           })
         );
         console.log("📝 Text forwarded");
       }
 
     } catch (err) {
-      console.error("❌ Handler error:", err.message);
+      if (err.message && err.message.includes("FLOOD_WAIT")) {
+        const sleepTime = err.seconds || 30;
+        console.log(`🚨 FLOOD_WAIT ${sleepTime}s`);
+        await new Promise(r => setTimeout(r, sleepTime * 1000));
+      } else {
+        console.error("❌ Handler Error:", err.message);
+      }
     }
   }, new NewMessage({}));
 
 })();
 
 /* =====================================================
-   6️⃣ GRACEFUL SHUTDOWN
+   🛑 GRACEFUL SHUTDOWN
 ===================================================== */
+process.on("SIGTERM", async () => {
+  console.log("🛑 Closing Browser...");
+  if (browser) await browser.close();
+  process.exit(0);
+});
+
 process.on("SIGINT", async () => {
+  console.log("🛑 Closing Browser...");
   if (browser) await browser.close();
   process.exit(0);
 });
