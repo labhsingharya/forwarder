@@ -26,7 +26,9 @@ const DEST_CHAT = process.env.DESTINATION_CHAT;
 let timestamps = [];
 
 /* ================= FAYM → MEESHO (BEST POSSIBLE FREE LOGIC) ================= */
-async function unshortFaymBest(url) {
+async function unshortFaymUntilMeesho(url, depth = 0) {
+  if (depth > 3) return null; // 🔒 safety limit
+
   const headers = {
     "user-agent":
       "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
@@ -41,9 +43,16 @@ async function unshortFaymBest(url) {
     });
 
     const loc = r1.headers.get("location");
-    if (loc && loc.includes("meesho.com")) {
-      console.log("✅ Faym resolved via redirect");
-      return loc;
+    if (loc) {
+      if (loc.includes("meesho.com")) {
+        console.log("✅ Meesho via redirect");
+        return loc;
+      }
+
+      if (loc.includes("faym.co")) {
+        console.log("🔁 Faym → Faym redirect");
+        return unshortFaymUntilMeesho(loc, depth + 1);
+      }
     }
 
     /* STEP 2: HTML SCAN */
@@ -55,23 +64,29 @@ async function unshortFaymBest(url) {
 
     const html = await r2.text();
 
-    const match = html.match(
+    // Meesho link directly inside HTML / JS
+    const meesho = html.match(
       /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
     );
-
-    if (match) {
-      console.log("✅ Faym resolved via HTML scan");
-      return match[0];
+    if (meesho) {
+      console.log("✅ Meesho via HTML");
+      return meesho[0];
     }
 
-    /* STEP 3: FAIL */
+    // Faym inside HTML → try again
+    const nextFaym = html.match(/https?:\/\/faym\.co[^\s"'<>]+/i);
+    if (nextFaym) {
+      console.log("🔁 Faym → Faym via HTML");
+      return unshortFaymUntilMeesho(nextFaym[0], depth + 1);
+    }
+
     return null;
 
   } catch (e) {
-    console.log("❌ Faym fetch error");
     return null;
   }
 }
+
 
 /* ================= START TELEGRAM USERBOT ================= */
 (async () => {
