@@ -26,21 +26,27 @@ const DEST_CHAT = process.env.DESTINATION_CHAT;
 let timestamps = [];
 
 /* ================= FAYM → MEESHO UNSHORT (NO PLAYWRIGHT) ================= */
-async function unshortFaymStrict(url, depth = 0) {
-  if (depth > 5) return null;
-
+async function unshortFaymStrict(url) {
   try {
     const res = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
       headers: {
         "user-agent":
           "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-      },
-      redirect: "follow",
-      timeout: 15000
+      }
     });
 
-    const html = await res.text();
+    const loc = res.headers.get("location");
+    if (loc && loc.includes("meesho.com")) {
+      return loc;
+    }
 
+    return null;
+  } catch {
+    return null;
+  }
+}
     // 1️⃣ Direct Meesho link in HTML
     const meesho = html.match(
       /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
