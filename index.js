@@ -47,27 +47,7 @@ async function unshortFaymStrict(url) {
     return null;
   }
 }
-    // 1️⃣ Direct Meesho link in HTML
-    const meesho = html.match(
-      /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
-    );
-    if (meesho) return meesho[0];
 
-    // 2️⃣ Meta refresh
-    const meta = html.match(/url=([^"' >]+)/i);
-    if (meta) {
-      const next = meta[1];
-      if (next.includes("meesho.com")) return next;
-      if (next.includes("faym.co"))
-        return unshortFaymStrict(next, depth + 1);
-    }
-
-    return null;
-  } catch (e) {
-    console.log("❌ Faym unshort failed");
-    return null;
-  }
-}
 
 /* ================= START TELEGRAM USERBOT ================= */
 (async () => {
