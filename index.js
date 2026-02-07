@@ -1,7 +1,7 @@
 import http from "http";
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
-import { NewMessage } from "telegram/events";
+import { NewMessage } from "telegram/events/index.js";
 import { chromium } from "playwright";
 
 /* ================= HTTP SERVER (RENDER KEEP ALIVE) ================= */
