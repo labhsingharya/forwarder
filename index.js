@@ -25,29 +25,53 @@ const DEST_CHAT = process.env.DESTINATION_CHAT;
 /* ================= FLOOD CONTROL ================= */
 let timestamps = [];
 
-/* ================= FAYM → MEESHO UNSHORT (NO PLAYWRIGHT) ================= */
-async function unshortFaymStrict(url) {
+/* ================= FAYM → MEESHO (BEST POSSIBLE FREE LOGIC) ================= */
+async function unshortFaymBest(url) {
+  const headers = {
+    "user-agent":
+      "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
+  };
+
   try {
-    const res = await fetch(url, {
+    /* STEP 1: MANUAL REDIRECT CHECK */
+    const r1 = await fetch(url, {
       method: "GET",
       redirect: "manual",
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-      }
+      headers
     });
 
-    const loc = res.headers.get("location");
+    const loc = r1.headers.get("location");
     if (loc && loc.includes("meesho.com")) {
+      console.log("✅ Faym resolved via redirect");
       return loc;
     }
 
+    /* STEP 2: HTML SCAN */
+    const r2 = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers
+    });
+
+    const html = await r2.text();
+
+    const match = html.match(
+      /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
+    );
+
+    if (match) {
+      console.log("✅ Faym resolved via HTML scan");
+      return match[0];
+    }
+
+    /* STEP 3: FAIL */
     return null;
-  } catch {
+
+  } catch (e) {
+    console.log("❌ Faym fetch error");
     return null;
   }
 }
-
 
 /* ================= START TELEGRAM USERBOT ================= */
 (async () => {
@@ -68,7 +92,7 @@ async function unshortFaymStrict(url) {
       const chatId = (await client.getPeerId(msg.peerId)).toString();
       if (chatId !== SOURCE_CHAT) return;
 
-      /* ===== FLOOD LIMIT ===== */
+      /* ===== FLOOD CONTROL ===== */
       const now = Math.floor(Date.now() / 1000);
       timestamps = timestamps.filter(t => t > now - 10);
       timestamps.push(now);
@@ -84,11 +108,14 @@ async function unshortFaymStrict(url) {
 
       for (const u of urls) {
         if (u.includes("faym.co")) {
-          const finalUrl = await unshortFaymStrict(u);
+          const finalUrl = await unshortFaymBest(u);
+
           if (!finalUrl) {
-            console.log("⛔ Faym reject");
-            return;
+            console.log("⛔ Faym removed");
+            text = text.replaceAll(u, "");
+            continue;
           }
+
           text = text.replaceAll(u, finalUrl);
         }
       }
