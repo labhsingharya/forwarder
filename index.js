@@ -4,7 +4,9 @@ import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage } from "telegram/events/index.js";
 
-/* ================= HTTP SERVER (RENDER KEEP ALIVE) ================= */
+/* =====================================================
+   1️⃣ HTTP SERVER (Render Web Service alive rakhne ke liye)
+===================================================== */
 const PORT = process.env.PORT || 10000;
 
 http.createServer((req, res) => {
@@ -14,18 +16,24 @@ http.createServer((req, res) => {
   console.log("🌐 Web Service active on port", PORT);
 });
 
-/* ================= ENV ================= */
+/* =====================================================
+   2️⃣ ENV VARIABLES
+===================================================== */
 const apiId = Number(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
 
-const SOURCE_CHAT = process.env.SOURCE_CHAT;
-const DEST_CHAT = process.env.DESTINATION_CHAT;
+const SOURCE_CHAT = process.env.SOURCE_CHAT;      // -100xxxx
+const DEST_CHAT = process.env.DESTINATION_CHAT;   // -100xxxx
 
-/* ================= FLOOD CONTROL ================= */
+/* =====================================================
+   3️⃣ FLOOD CONTROL
+===================================================== */
 let timestamps = [];
 
-/* ================= FAYM → MEESHO (BEST POSSIBLE FREE LOGIC) ================= */
+/* =====================================================
+   4️⃣ FAYM → MEESHO UNSHORT (RECURSIVE, SAFE)
+===================================================== */
 async function unshortFaymUntilMeesho(url, depth = 0) {
   if (depth > 3) return null; // 🔒 safety limit
 
@@ -35,7 +43,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
   };
 
   try {
-    /* STEP 1: MANUAL REDIRECT CHECK */
+    /* ---- STEP A: HTTP REDIRECT CHECK ---- */
     const r1 = await fetch(url, {
       method: "GET",
       redirect: "manual",
@@ -48,14 +56,13 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         console.log("✅ Meesho via redirect");
         return loc;
       }
-
       if (loc.includes("faym.co")) {
-        console.log("🔁 Faym → Faym redirect");
+        console.log("🔁 Faym → Faym (redirect)");
         return unshortFaymUntilMeesho(loc, depth + 1);
       }
     }
 
-    /* STEP 2: HTML SCAN */
+    /* ---- STEP B: HTML + JS SCAN ---- */
     const r2 = await fetch(url, {
       method: "GET",
       redirect: "follow",
@@ -64,7 +71,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
 
     const html = await r2.text();
 
-    // Meesho link directly inside HTML / JS
+    // Meesho direct ya JS ke andar
     const meesho = html.match(
       /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
     );
@@ -73,22 +80,24 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
       return meesho[0];
     }
 
-    // Faym inside HTML → try again
+    // Agar faym hi faym nikle
     const nextFaym = html.match(/https?:\/\/faym\.co[^\s"'<>]+/i);
     if (nextFaym) {
-      console.log("🔁 Faym → Faym via HTML");
+      console.log("🔁 Faym → Faym (HTML)");
       return unshortFaymUntilMeesho(nextFaym[0], depth + 1);
     }
 
     return null;
 
-  } catch (e) {
+  } catch (err) {
+    console.log("❌ Faym unshort error");
     return null;
   }
 }
 
-
-/* ================= START TELEGRAM USERBOT ================= */
+/* =====================================================
+   5️⃣ TELEGRAM USERBOT START
+===================================================== */
 (async () => {
   console.log("🚀 Telegram Bot Starting...");
 
@@ -107,7 +116,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
       const chatId = (await client.getPeerId(msg.peerId)).toString();
       if (chatId !== SOURCE_CHAT) return;
 
-      /* ===== FLOOD CONTROL ===== */
+      /* ---- FLOOD CONTROL ---- */
       const now = Math.floor(Date.now() / 1000);
       timestamps = timestamps.filter(t => t > now - 10);
       timestamps.push(now);
@@ -118,6 +127,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         timestamps = [];
       }
 
+      /* ---- TEXT PROCESS ---- */
       let text = msg.message || "";
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
 
@@ -125,18 +135,16 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         if (u.includes("faym.co")) {
           const finalUrl = await unshortFaymUntilMeesho(u);
 
-
           if (!finalUrl) {
-            console.log("⛔ Faym removed");
-            text = text.replaceAll(u, "");
-            continue;
+            console.log("⛔ Meesho not found, message skipped");
+            return; // ❌ poora message skip
           }
 
           text = text.replaceAll(u, finalUrl);
         }
       }
 
-      /* ===== MEDIA ===== */
+      /* ---- MEDIA ---- */
       if (msg.media) {
         await client.sendFile(DEST_CHAT, {
           file: msg.media,
@@ -146,7 +154,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         return;
       }
 
-      /* ===== TEXT ===== */
+      /* ---- TEXT ---- */
       if (text.trim()) {
         await client.invoke(
           new Api.messages.SendMessage({
