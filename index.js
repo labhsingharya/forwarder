@@ -1,102 +1,91 @@
 import http from "http";
-import fetch from "node-fetch";
 import { TelegramClient, Api } from "telegram";
 import { StringSession } from "telegram/sessions/index.js";
 import { NewMessage } from "telegram/events/index.js";
+import { chromium } from "playwright";
 
 /* =====================================================
-   1️⃣ HTTP SERVER (Render Web Service alive rakhne ke liye)
+   1️⃣ HTTP SERVER (keep service alive)
 ===================================================== */
 const PORT = process.env.PORT || 10000;
 
 http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Telegram Userbot Running ✅");
+  res.writeHead(200);
+  res.end("Telegram Userbot + Playwright Running ✅");
 }).listen(PORT, () => {
   console.log("🌐 Web Service active on port", PORT);
 });
 
 /* =====================================================
-   2️⃣ ENV VARIABLES
+   2️⃣ ENV
 ===================================================== */
 const apiId = Number(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
 
-const SOURCE_CHAT = process.env.SOURCE_CHAT;      // -100xxxx
-const DEST_CHAT = process.env.DESTINATION_CHAT;   // -100xxxx
+const SOURCE_CHAT = process.env.SOURCE_CHAT;
+const DEST_CHAT = process.env.DESTINATION_CHAT;
 
 /* =====================================================
-   3️⃣ FLOOD CONTROL
+   3️⃣ PLAYWRIGHT (single browser instance)
 ===================================================== */
-let timestamps = [];
+let browser;
+
+async function getBrowser() {
+  if (browser) return browser;
+
+  console.log("🧠 Launching Chromium...");
+  browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ]
+  });
+
+  console.log("✅ Chromium Ready");
+  return browser;
+}
 
 /* =====================================================
-   4️⃣ FAYM → MEESHO UNSHORT (RECURSIVE, SAFE)
+   4️⃣ FAYM → MEESHO (REAL BROWSER UNSHORT)
 ===================================================== */
-async function unshortFaymUntilMeesho(url, depth = 0) {
-  if (depth > 3) return null; // 🔒 safety limit
-
-  const headers = {
-    "user-agent":
-      "Mozilla/5.0 (Linux; Android 12; Mobile) AppleWebKit/537.36 Chrome/120 Safari/537.36"
-  };
+async function unshortFaymWithBrowser(url) {
+  const br = await getBrowser();
+  const page = await br.newPage();
 
   try {
-    /* ---- STEP A: HTTP REDIRECT CHECK ---- */
-    const r1 = await fetch(url, {
-      method: "GET",
-      redirect: "manual",
-      headers
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 30000
     });
 
-    const loc = r1.headers.get("location");
-    if (loc) {
-      if (loc.includes("meesho.com")) {
-        console.log("✅ Meesho via redirect");
-        return loc;
-      }
-      if (loc.includes("faym.co")) {
-        console.log("🔁 Faym → Faym (redirect)");
-        return unshortFaymUntilMeesho(loc, depth + 1);
-      }
+    // Faym JS redirect ka wait
+    await page.waitForTimeout(6000);
+
+    const finalUrl = page.url();
+
+    await page.close();
+
+    if (finalUrl.includes("meesho.com")) {
+      console.log("✅ Faym resolved via browser");
+      return finalUrl;
     }
 
-    /* ---- STEP B: HTML + JS SCAN ---- */
-    const r2 = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers
-    });
-
-    const html = await r2.text();
-
-    // Meesho direct ya JS ke andar
-    const meesho = html.match(
-      /https?:\/\/(www\.)?meesho\.com[^\s"'<>]+/i
-    );
-    if (meesho) {
-      console.log("✅ Meesho via HTML");
-      return meesho[0];
-    }
-
-    // Agar faym hi faym nikle
-    const nextFaym = html.match(/https?:\/\/faym\.co[^\s"'<>]+/i);
-    if (nextFaym) {
-      console.log("🔁 Faym → Faym (HTML)");
-      return unshortFaymUntilMeesho(nextFaym[0], depth + 1);
-    }
-
+    console.log("⛔ Faym resolved but not Meesho");
     return null;
 
-  } catch (err) {
-    console.log("❌ Faym unshort error");
+  } catch (e) {
+    await page.close();
+    console.log("❌ Playwright error:", e.message);
     return null;
   }
 }
 
 /* =====================================================
-   5️⃣ TELEGRAM USERBOT START
+   5️⃣ TELEGRAM USERBOT
 ===================================================== */
 (async () => {
   console.log("🚀 Telegram Bot Starting...");
@@ -116,27 +105,15 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
       const chatId = (await client.getPeerId(msg.peerId)).toString();
       if (chatId !== SOURCE_CHAT) return;
 
-      /* ---- FLOOD CONTROL ---- */
-      const now = Math.floor(Date.now() / 1000);
-      timestamps = timestamps.filter(t => t > now - 10);
-      timestamps.push(now);
-
-      if (timestamps.length > 10) {
-        console.log("⚠️ Flood wait");
-        await new Promise(r => setTimeout(r, 60000));
-        timestamps = [];
-      }
-
-      /* ---- TEXT PROCESS ---- */
       let text = msg.message || "";
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
 
       for (const u of urls) {
         if (u.includes("faym.co")) {
-          const finalUrl = await unshortFaymUntilMeesho(u);
+          const finalUrl = await unshortFaymWithBrowser(u);
 
           if (!finalUrl) {
-            console.log("⛔ Meesho not found, message skipped");
+            console.log("⛔ Faym → Meesho not found, skip post");
             return; // ❌ poora message skip
           }
 
@@ -144,7 +121,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         }
       }
 
-      /* ---- MEDIA ---- */
+      /* MEDIA */
       if (msg.media) {
         await client.sendFile(DEST_CHAT, {
           file: msg.media,
@@ -154,7 +131,7 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
         return;
       }
 
-      /* ---- TEXT ---- */
+      /* TEXT */
       if (text.trim()) {
         await client.invoke(
           new Api.messages.SendMessage({
@@ -171,3 +148,11 @@ async function unshortFaymUntilMeesho(url, depth = 0) {
   }, new NewMessage({}));
 
 })();
+
+/* =====================================================
+   6️⃣ GRACEFUL SHUTDOWN
+===================================================== */
+process.on("SIGINT", async () => {
+  if (browser) await browser.close();
+  process.exit(0);
+});
