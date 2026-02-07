@@ -1,34 +1,44 @@
-const { TelegramClient, Api } = require("telegram");
-const { StringSession } = require("telegram/sessions");
-const { NewMessage } = require("telegram/events");
-const { chromium } = require("playwright");
+import http from "http";
+import { TelegramClient, Api } from "telegram";
+import { StringSession } from "telegram/sessions";
+import { NewMessage } from "telegram/events";
+import { chromium } from "playwright";
 
-/* ===== ENV ===== */
+/* ================= HTTP SERVER (RENDER KEEP ALIVE) ================= */
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Telegram Userbot Running ✅");
+}).listen(PORT, () => {
+  console.log("🌐 Web Service active on port", PORT);
+});
+
+/* ================= ENV ================= */
 const apiId = parseInt(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
 
-const sourceChat = process.env.SOURCE_CHAT || "-1003508245377";
-const destinationChat = process.env.DESTINATION_CHAT || "-1001208173141";
+const sourceChat = process.env.SOURCE_CHAT;
+const destinationChat = process.env.DESTINATION_CHAT;
 
-/* ===== RATE LIMIT ===== */
+/* ================= RATE LIMIT ================= */
 let messageTimestamps = [];
 
-/* ===== PLAYWRIGHT BROWSER ===== */
+/* ================= PLAYWRIGHT ================= */
 let browser;
 
-/* ===== LAZY BROWSER START ===== */
 async function getBrowser() {
   if (browser) return browser;
 
   console.log("🧠 Launching Chromium...");
   browser = await chromium.launch({
     headless: true,
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu"
+      "--disable-dev-shm-usage"
     ]
   });
 
@@ -36,11 +46,9 @@ async function getBrowser() {
   return browser;
 }
 
-/* =====================================================
-   🔁 STRICT faym.co → ONLY meesho.com UNSHORT
-===================================================== */
+/* ================= STRICT faym.co → meesho.com ================= */
 async function unshortFaymStrict(url, depth = 0) {
-  if (depth > 6) return null; // safety limit
+  if (depth > 4) return null;
 
   let page;
   try {
@@ -50,111 +58,90 @@ async function unshortFaymStrict(url, depth = 0) {
     let finalUrl = null;
 
     page.on("request", req => {
-      const reqUrl = req.url();
-      if (reqUrl.startsWith("http") && !reqUrl.includes("faym.co")) {
-        finalUrl = reqUrl;
+      const u = req.url();
+      if (u.startsWith("http") && !u.includes("faym.co")) {
+        finalUrl = u;
       }
     });
 
-    await page.goto(url, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000
-    });
-
-    await page.waitForTimeout(6000);
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForTimeout(4000);
     await page.close();
 
     if (!finalUrl) return null;
 
-    // ✅ ACCEPT ONLY MEESHO
-    if (finalUrl.includes("meesho.com")) {
-      return finalUrl;
-    }
+    if (finalUrl.includes("meesho.com")) return finalUrl;
+    if (finalUrl.includes("faym.co")) return unshortFaymStrict(finalUrl, depth + 1);
 
-    // 🔁 AGAIN faym.co → REPEAT
-    if (finalUrl.includes("faym.co")) {
-      return await unshortFaymStrict(finalUrl, depth + 1);
-    }
-
-    // ❌ ANYTHING ELSE → REJECT
     return null;
 
-  } catch (err) {
+  } catch (e) {
     if (page) await page.close();
-    console.error("❌ Unshort Error:", err.message);
+    console.error("❌ Unshort Error:", e.message);
     return null;
   }
 }
 
-/* =====================================================
-   🚀 START BOT
-===================================================== */
+/* ================= START TELEGRAM USERBOT ================= */
 (async () => {
-  console.log("🚀 Bot Starting...");
+  console.log("🚀 Telegram Bot Starting...");
 
   const client = new TelegramClient(stringSession, apiId, apiHash, {
     connectionRetries: 5
   });
 
   await client.connect();
-  console.log("✅ Bot Connected | Watching:", sourceChat);
+  console.log("✅ Telegram Connected");
 
   client.addEventHandler(async (event) => {
-    const message = event.message;
-    if (!message || !message.peerId) return;
+    const msg = event.message;
+    if (!msg || !msg.peerId) return;
 
     try {
-      const senderChatId = (await client.getPeerId(message.peerId)).toString();
-      if (senderChatId !== sourceChat) return;
+      const chatId = (await client.getPeerId(msg.peerId)).toString();
+      if (chatId !== sourceChat) return;
 
-      /* ===== RATE LIMIT ===== */
+      /* ===== Flood Control ===== */
       const now = Math.floor(Date.now() / 1000);
-      messageTimestamps = messageTimestamps.filter(ts => ts > now - 10);
+      messageTimestamps = messageTimestamps.filter(t => t > now - 10);
       messageTimestamps.push(now);
 
       if (messageTimestamps.length > 10) {
-        console.log("⚠️ Flood Control Sleep...");
-        await new Promise(r => setTimeout(r, 100000));
+        console.log("⚠️ Flood sleep");
+        await new Promise(r => setTimeout(r, 60000));
         messageTimestamps = [];
       }
 
-      /* ===== TEXT / CAPTION ===== */
-      let text = message.message || message.text || "";
+      let text = msg.message || "";
 
-      /* ===== PROCESS faym.co LINKS ===== */
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
-      let rejectMessage = false;
+      let reject = false;
 
-      for (const url of urls) {
-        if (url.includes("faym.co")) {
-          const finalUrl = await unshortFaymStrict(url);
-
+      for (const u of urls) {
+        if (u.includes("faym.co")) {
+          const finalUrl = await unshortFaymStrict(u);
           if (!finalUrl) {
-            rejectMessage = true;
+            reject = true;
             break;
           }
-
-          text = text.split(url).join(finalUrl);
+          text = text.replaceAll(u, finalUrl);
         }
       }
 
-      /* 🚫 REJECT MESSAGE COMPLETELY */
-      if (rejectMessage) {
-        console.log("⛔ Non-Meesho link found → Message skipped");
+      if (reject) {
+        console.log("⛔ Rejected non-meesho link");
         return;
       }
 
-      /* ===== MEDIA MESSAGE ===== */
-      if (message.media) {
+      if (msg.media) {
         await client.sendFile(destinationChat, {
-          file: message.media,
+          file: msg.media,
           caption: text || undefined
         });
         console.log("📸 Media forwarded");
         return;
       }
 
-      /* ===== TEXT MESSAGE ===== */
       if (text.trim()) {
         await client.invoke(
           new Api.messages.SendMessage({
@@ -167,29 +154,18 @@ async function unshortFaymStrict(url, depth = 0) {
       }
 
     } catch (err) {
-      if (err.message && err.message.includes("FLOOD_WAIT")) {
-        const sleepTime = err.seconds || 30;
-        console.log(`🚨 FLOOD_WAIT ${sleepTime}s`);
-        await new Promise(r => setTimeout(r, sleepTime * 1000));
-      } else {
-        console.error("❌ Handler Error:", err.message);
-      }
+      console.error("❌ Handler Error:", err.message);
     }
   }, new NewMessage({}));
 
 })();
 
-/* =====================================================
-   🛑 GRACEFUL SHUTDOWN
-===================================================== */
-process.on("SIGTERM", async () => {
-  console.log("🛑 Closing Browser...");
+/* ================= GRACEFUL SHUTDOWN ================= */
+async function shutdown() {
+  console.log("🛑 Shutting down...");
   if (browser) await browser.close();
   process.exit(0);
-});
+}
 
-process.on("SIGINT", async () => {
-  console.log("🛑 Closing Browser...");
-  if (browser) await browser.close();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
