@@ -3,7 +3,7 @@ const { StringSession } = require("telegram/sessions");
 const { NewMessage } = require("telegram/events");
 const { chromium } = require("playwright");
 
-/* ===== ENV ===== */
+/* ===== ENV ========== */
 const apiId = parseInt(process.env.API_ID);
 const apiHash = process.env.API_HASH;
 const stringSession = new StringSession(process.env.SESSION_STRING);
