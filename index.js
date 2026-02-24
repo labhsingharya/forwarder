@@ -17,7 +17,9 @@ let messageTimestamps = [];
 /* ===== PLAYWRIGHT BROWSER ===== */
 let browser;
 
-/* ===== LAZY BROWSER START ===== */
+/* =====================================================
+   🧠 LAZY BROWSER START
+===================================================== */
 async function getBrowser() {
   if (browser) return browser;
 
@@ -37,10 +39,26 @@ async function getBrowser() {
 }
 
 /* =====================================================
-   🔁 STRICT faym.co → ONLY meesho.com UNSHORT
+   🧹 REMOVE TRACKING PARAMS (src= etc.)
+===================================================== */
+function cleanTrackingParams(url) {
+  try {
+    const parsed = new URL(url);
+
+    // Remove src param like ?src=ig
+    parsed.searchParams.delete("src");
+
+    return parsed.toString();
+  } catch (e) {
+    return url;
+  }
+}
+
+/* =====================================================
+   🔁 STRICT faym.co → ONLY meesho.com
 ===================================================== */
 async function unshortFaymStrict(url, depth = 0) {
-  if (depth > 6) return null; // safety limit
+  if (depth > 6) return null;
 
   let page;
   try {
@@ -66,17 +84,14 @@ async function unshortFaymStrict(url, depth = 0) {
 
     if (!finalUrl) return null;
 
-    // ✅ ACCEPT ONLY MEESHO
     if (finalUrl.includes("meesho.com")) {
       return finalUrl;
     }
 
-    // 🔁 AGAIN faym.co → REPEAT
     if (finalUrl.includes("faym.co")) {
       return await unshortFaymStrict(finalUrl, depth + 1);
     }
 
-    // ❌ ANYTHING ELSE → REJECT
     return null;
 
   } catch (err) {
@@ -121,11 +136,22 @@ async function unshortFaymStrict(url, depth = 0) {
       /* ===== TEXT / CAPTION ===== */
       let text = message.message || message.text || "";
 
-      /* ===== PROCESS faym.co LINKS ===== */
+      /* ===== PROCESS URLS ===== */
       const urls = text.match(/https?:\/\/[^\s]+/g) || [];
       let rejectMessage = false;
 
-      for (const url of urls) {
+      for (const originalUrl of urls) {
+
+        // 🧹 Remove tracking params first
+        const cleanedUrl = cleanTrackingParams(originalUrl);
+
+        if (cleanedUrl !== originalUrl) {
+          text = text.split(originalUrl).join(cleanedUrl);
+        }
+
+        let url = cleanedUrl;
+
+        // 🔁 Handle faym.co strict logic
         if (url.includes("faym.co")) {
           const finalUrl = await unshortFaymStrict(url);
 
@@ -150,6 +176,7 @@ async function unshortFaymStrict(url, depth = 0) {
           file: message.media,
           caption: text || undefined
         });
+
         console.log("📸 Media forwarded");
         return;
       }
@@ -163,6 +190,7 @@ async function unshortFaymStrict(url, depth = 0) {
             noWebpage: false
           })
         );
+
         console.log("📝 Text forwarded");
       }
 
